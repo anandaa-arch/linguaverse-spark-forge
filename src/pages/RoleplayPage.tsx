@@ -29,10 +29,23 @@ const scenarioOptions = [
 
 const RoleplayPage = () => {
   const [selectedScenario, setSelectedScenario] = useState(scenarioOptions[0]);
+  const [conversationContext, setConversationContext] = useState<any>({});
 
   const handleSendMessage = async (message: string) => {
     try {
-      const response = await getRoleplayResponse(selectedScenario.id, message);
+      const response = await getRoleplayResponse(
+        selectedScenario.id, 
+        message, 
+        conversationContext
+      );
+      
+      // Update conversation context based on response logic
+      // (This is a simple example and can be expanded)
+      setConversationContext(prev => ({
+        ...prev,
+        lastMessage: message
+      }));
+      
       return response;
     } catch (error) {
       console.error("Error sending message:", error);
@@ -109,3 +122,4 @@ const RoleplayPage = () => {
 };
 
 export default RoleplayPage;
+

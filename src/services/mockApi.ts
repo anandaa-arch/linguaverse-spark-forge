@@ -1,4 +1,3 @@
-
 // Mock API service for simulating backend interactions
 import { delay } from "@/lib/utils";
 
@@ -101,19 +100,36 @@ export const analyzePronunciation = async (audioBlob: Blob): Promise<Pronunciati
 };
 
 // Roleplay API
-export const getRoleplayResponse = async (scenario: string, message: string): Promise<string> => {
+export const getRoleplayResponse = async (scenario: string, message: string, conversationContext?: any): Promise<string> => {
   await delay(1000);
   
   if (scenario === "restaurant") {
-    if (message.toLowerCase().includes("menu")) {
-      return "Of course! Here's our menu. Today's special is grilled salmon with seasonal vegetables. Would you like some recommendations?";
+    // Convert message to lowercase for easier matching
+    const lowerMessage = message.toLowerCase().trim();
+
+    // Track conversation context (this would typically be managed by the frontend)
+    if (lowerMessage.includes("burger") || lowerMessage.includes("food")) {
+      return "Great choice! Would you like a classic burger or one with extra toppings? We also have fries and a drink to go with it.";
     }
-    
-    if (message.toLowerCase().includes("order")) {
+
+    if (lowerMessage.includes("classic burger")) {
+      return "Perfect! One classic burger coming up. Would you like fries or a drink with that?";
+    }
+
+    if (lowerMessage.includes("fries") || lowerMessage.includes("drink")) {
+      return "Excellent! Would you like to choose from our beverage menu or select a side? We have soft drinks, milkshakes, and a variety of sides.";
+    }
+
+    if (lowerMessage.includes("beverage") || lowerMessage.includes("menu")) {
+      return "Here are our drink options: Coca-Cola, Sprite, Iced Tea, Milkshake (Chocolate, Vanilla, or Strawberry), or Water. What would you like?";
+    }
+
+    if (lowerMessage.includes("order")) {
       return "I'd be happy to take your order. What would you like to have today?";
     }
-    
-    return "Welcome to our restaurant! How can I help you today?";
+
+    // Fallback for unclear messages
+    return "I'm sorry, could you please clarify your request? I'm here to help you order delicious food.";
   }
   
   if (scenario === "doctor") {
