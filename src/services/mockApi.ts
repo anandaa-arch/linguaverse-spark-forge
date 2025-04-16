@@ -49,38 +49,56 @@ export const initMockApi = () => {
 export const correctGrammar = async (text: string): Promise<GrammarResponse> => {
   await delay(1500);
   
-  // Example corrections
-  if (text.toLowerCase().includes("me go")) {
-    return {
-      correctedText: text.replace("me go", "I go"),
-      corrections: [
-        {
-          original: "me go",
-          corrected: "I go",
-          explanation: "Use the subject pronoun 'I' instead of 'me' when it's the subject of a sentence.",
-          type: "grammar"
-        }
-      ]
-    };
+  // Comprehensive grammar correction logic
+  const corrections: Array<{
+    original: string;
+    corrected: string;
+    explanation: string;
+    type: string;
+  }> = [];
+
+  // Convert to lowercase for easier matching
+  const lowerText = text.toLowerCase();
+
+  // Check for common grammar and spelling errors
+  if (lowerText.startsWith('i is')) {
+    corrections.push({
+      original: 'i is',
+      corrected: 'I am',
+      explanation: 'Corrected "i" to "I" (capitalization) and "is" to "am" (subject-verb agreement)',
+      type: 'grammar'
+    });
   }
-  
-  if (text.toLowerCase().includes("i has")) {
-    return {
-      correctedText: text.replace("i has", "I have"),
-      corrections: [
-        {
-          original: "i has",
-          corrected: "I have",
-          explanation: "The verb 'have' should be used with the subject 'I', not 'has'.",
-          type: "grammar"
-        }
-      ]
-    };
+
+  if (lowerText.includes('im gone')) {
+    corrections.push({
+      original: 'im gone',
+      corrected: 'I am going',
+      explanation: 'Corrected "im" to "I am" (contraction and verb tense)',
+      type: 'grammar'
+    });
   }
+
+  if (lowerText.includes('tommorow')) {
+    corrections.push({
+      original: 'tommorow',
+      corrected: 'tomorrow',
+      explanation: 'Corrected spelling of "tomorrow"',
+      type: 'spelling'
+    });
+  }
+
+  // More advanced error detection could be added here
   
+  // Construct the corrected text
+  let correctedText = text;
+  corrections.forEach(correction => {
+    correctedText = correctedText.replace(correction.original, correction.corrected);
+  });
+
   return {
-    correctedText: text,
-    corrections: []
+    correctedText: correctedText,
+    corrections: corrections.length > 0 ? corrections : []
   };
 };
 
