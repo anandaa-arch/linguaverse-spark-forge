@@ -1,3 +1,4 @@
+
 import { useState } from "react";
 import { motion } from "framer-motion";
 import Layout from "@/components/layout/Layout";
@@ -5,6 +6,7 @@ import { SectionHeading } from "@/components/ui/section-heading";
 import VoiceInterface from "@/components/VoiceInterface";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
+import { AIChatInterface } from "@/components/ui/ai-chat-interface";
 
 const avatarOptions = [
   { id: "linguabot", name: "LinguaBot", style: "futuristic", specialty: "general" },
@@ -12,7 +14,7 @@ const avatarOptions = [
   { id: "traveler", name: "Traveler", style: "casual", specialty: "pronunciation" }
 ];
 
-const FuturisticAvatar = () => {
+const FuturisticAvatar = ({ pulse = false }) => {
   return (
     <group>
       {/* Simple robot/futuristic avatar */}
@@ -27,16 +29,28 @@ const FuturisticAvatar = () => {
       {/* Eyes */}
       <mesh position={[0.3, 0.2, 0.9]}>
         <sphereGeometry args={[0.1, 16, 16]} />
-        <meshStandardMaterial color="#0EA5E9" emissive="#0EA5E9" emissiveIntensity={2} />
+        <meshStandardMaterial 
+          color="#0EA5E9" 
+          emissive="#0EA5E9" 
+          emissiveIntensity={pulse ? 3 : 2} 
+        />
       </mesh>
       <mesh position={[-0.3, 0.2, 0.9]}>
         <sphereGeometry args={[0.1, 16, 16]} />
-        <meshStandardMaterial color="#0EA5E9" emissive="#0EA5E9" emissiveIntensity={2} />
+        <meshStandardMaterial 
+          color="#0EA5E9" 
+          emissive="#0EA5E9" 
+          emissiveIntensity={pulse ? 3 : 2} 
+        />
       </mesh>
       {/* Circuitry */}
       <mesh position={[0, 0, 0]} rotation={[0, Math.PI / 4, 0]}>
         <torusGeometry args={[1.2, 0.05, 16, 32, Math.PI * 1.5]} />
-        <meshStandardMaterial color="#0EA5E9" emissive="#0EA5E9" emissiveIntensity={1} />
+        <meshStandardMaterial 
+          color="#0EA5E9" 
+          emissive="#0EA5E9" 
+          emissiveIntensity={pulse ? 2 : 1} 
+        />
       </mesh>
     </group>
   );
@@ -45,6 +59,19 @@ const FuturisticAvatar = () => {
 const AvatarPage = () => {
   const [selectedAvatar, setSelectedAvatar] = useState(avatarOptions[0]);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [useVoice, setUseVoice] = useState(true);
+  
+  // Generate appropriate welcome message based on avatar
+  const getWelcomeMessage = () => {
+    switch(selectedAvatar.specialty) {
+      case "grammar":
+        return "Welcome! I'm Professor Lang, your grammar expert. I'll help analyze your grammar and provide detailed corrections. Click 'Start Speaking' when you're ready.";
+      case "pronunciation":
+        return "Hi there! I'm Traveler, your pronunciation coach. I'll help you improve your pronunciation with practical tips. Click 'Start Speaking' when you're ready to begin.";
+      default:
+        return "Hello! I'm LinguaBot, your AI language tutor. I can help with various language skills. Click 'Start Speaking' when you're ready to start our conversation.";
+    }
+  };
   
   return (
     <Layout>
@@ -85,10 +112,32 @@ const AvatarPage = () => {
                   ))}
                 </div>
                 
-                <VoiceInterface 
-                  selectedAvatar={selectedAvatar}
-                  onSpeakingChange={setIsSpeaking}
-                />
+                <div className="flex gap-3 mb-6">
+                  <button 
+                    className={`flex-1 py-2 px-4 rounded-lg border transition ${useVoice ? 'bg-primary/10 border-primary' : 'border-border'}`}
+                    onClick={() => setUseVoice(true)}
+                  >
+                    Voice Interaction
+                  </button>
+                  <button 
+                    className={`flex-1 py-2 px-4 rounded-lg border transition ${!useVoice ? 'bg-primary/10 border-primary' : 'border-border'}`}
+                    onClick={() => setUseVoice(false)}
+                  >
+                    Text Chat
+                  </button>
+                </div>
+                
+                {useVoice ? (
+                  <VoiceInterface 
+                    selectedAvatar={selectedAvatar}
+                    onSpeakingChange={setIsSpeaking}
+                  />
+                ) : (
+                  <AIChatInterface 
+                    botName={`${selectedAvatar.name} - ${selectedAvatar.specialty} Expert`}
+                    initialMessage={getWelcomeMessage()}
+                  />
+                )}
               </motion.div>
               
               <motion.div
@@ -102,7 +151,7 @@ const AvatarPage = () => {
                     <ambientLight intensity={0.5} />
                     <directionalLight position={[10, 10, 10]} intensity={1} />
                     <directionalLight position={[-10, -10, -10]} intensity={0.2} color="#0EA5E9" />
-                    <FuturisticAvatar />
+                    <FuturisticAvatar pulse={isSpeaking} />
                     <OrbitControls enableZoom={false} />
                   </Canvas>
                   

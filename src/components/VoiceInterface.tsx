@@ -48,6 +48,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
   const startConversation = async () => {
     setIsLoading(true);
     setError(null);
+    setTranscript("");
     
     try {
       chatRef.current = new RealtimeChat(handleMessage);
@@ -72,14 +73,25 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
   };
 
   const endConversation = () => {
-    chatRef.current?.disconnect();
-    setIsConnected(false);
-    onSpeakingChange(false);
+    if (chatRef.current) {
+      // Important: Send a message to trigger response before disconnecting
+      chatRef.current.finalizeSession();
+      
+      // Short delay before disconnecting to allow for response processing
+      setTimeout(() => {
+        chatRef.current?.disconnect();
+        chatRef.current = null;
+        setIsConnected(false);
+      }, 500);
+    }
   };
 
   useEffect(() => {
     return () => {
-      chatRef.current?.disconnect();
+      if (chatRef.current) {
+        chatRef.current.disconnect();
+        chatRef.current = null;
+      }
     };
   }, []);
 

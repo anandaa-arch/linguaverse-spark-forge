@@ -115,6 +115,23 @@ export class RealtimeChat {
         this.connectionReady = false;
       };
 
+      // Wait for connection to be established
+      return new Promise<void>((resolve, reject) => {
+        let timeoutId: number;
+        
+        const connectionTimeout = setTimeout(() => {
+          reject(new Error("Connection timeout"));
+        }, 10000);
+        
+        const checkInterval = setInterval(() => {
+          if (this.ws?.readyState === WebSocket.OPEN) {
+            clearInterval(checkInterval);
+            clearTimeout(connectionTimeout);
+            resolve();
+          }
+        }, 100);
+      });
+
     } catch (error) {
       console.error("Error initializing chat:", error);
       throw error;
@@ -133,6 +150,35 @@ export class RealtimeChat {
       }
     });
     await this.recorder.start();
+  }
+
+  // Add this new method to finalize the session when user stops recording
+  finalizeSession() {
+    if (this.ws?.readyState === WebSocket.OPEN && this.connectionReady) {
+      console.log("Finalizing session, triggering response.create");
+      
+      // Create a conversation item to prompt the AI to respond
+      this.ws.send(JSON.stringify({
+        type: 'conversation.item.create',
+        item: {
+          type: 'message',
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: 'Please analyze what I said and respond accordingly.'
+            }
+          ]
+        },
+        client_secret: { value: this.clientSecret }
+      }));
+      
+      // Explicitly request a response
+      this.ws.send(JSON.stringify({
+        type: 'response.create',
+        client_secret: { value: this.clientSecret }
+      }));
+    }
   }
 
   private encodeAudioData(float32Array: Float32Array): string {
