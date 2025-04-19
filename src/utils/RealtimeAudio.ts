@@ -60,10 +60,11 @@ export class AudioRecorder {
 }
 
 export class RealtimeChat {
-  private pc: RTCPeerConnection | null = null;
-  private dc: RTCDataChannel | null = null;
+  private ws: WebSocket | null = null;
   private audioEl: HTMLAudioElement;
   private recorder: AudioRecorder | null = null;
+  private clientSecret: string | null = null;
+  private connectionReady: boolean = false;
 
   constructor(private onMessage: (message: any) => void) {
     this.audioEl = document.createElement("audio");
@@ -72,36 +73,66 @@ export class RealtimeChat {
 
   async init() {
     try {
-      const response = await fetch('https://mxdxmxzszgzgmohvemoz.functions.supabase.co/realtime-chat');
-      const data = await response.json();
+      // Create WebSocket connection to our Supabase edge function
+      this.ws = new WebSocket('wss://mxdxmxzszgzgmohvemoz.functions.supabase.co/realtime-chat');
       
-      if (!data.client_secret?.value) {
-        throw new Error("Failed to get session token");
-      }
-
-      // Create WebSocket connection
-      const ws = new WebSocket('wss://mxdxmxzszgzgmohvemoz.functions.supabase.co/realtime-chat');
-      
-      ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        this.onMessage(data);
+      this.ws.onopen = () => {
+        console.log('WebSocket connection established');
       };
 
-      // Start recording
-      this.recorder = new AudioRecorder((audioData) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            type: 'input_audio_buffer.append',
-            audio: this.encodeAudioData(audioData)
-          }));
+      this.ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log('Received message from server:', data);
+          
+          // Check for errors
+          if (data.error) {
+            console.error('Server error:', data.error);
+            throw new Error(data.error);
+          }
+          
+          // Store client secret when we receive the session token
+          if (data.client_secret?.value && !this.clientSecret) {
+            console.log('Received client secret, starting recorder');
+            this.clientSecret = data.client_secret.value;
+            this.connectionReady = true;
+            this.startRecorder();
+          }
+          
+          // Forward all messages to the callback handler
+          this.onMessage(data);
+        } catch (error) {
+          console.error('Error handling websocket message:', error);
         }
-      });
-      await this.recorder.start();
+      };
+
+      this.ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
+
+      this.ws.onclose = (event) => {
+        console.log('WebSocket connection closed:', event.code, event.reason);
+        this.connectionReady = false;
+      };
 
     } catch (error) {
       console.error("Error initializing chat:", error);
       throw error;
     }
+  }
+
+  private async startRecorder() {
+    // Start recording audio once we have the client secret
+    this.recorder = new AudioRecorder((audioData) => {
+      if (this.ws?.readyState === WebSocket.OPEN && this.connectionReady) {
+        this.ws.send(JSON.stringify({
+          type: 'input_audio_buffer.append',
+          audio: this.encodeAudioData(audioData),
+          client_secret: { value: this.clientSecret }
+        }));
+      }
+    });
+    await this.recorder.start();
   }
 
   private encodeAudioData(float32Array: Float32Array): string {
@@ -125,5 +156,13 @@ export class RealtimeChat {
 
   disconnect() {
     this.recorder?.stop();
+    if (this.ws) {
+      if (this.ws.readyState === WebSocket.OPEN) {
+        this.ws.close();
+      }
+      this.ws = null;
+    }
+    this.clientSecret = null;
+    this.connectionReady = false;
   }
 }
