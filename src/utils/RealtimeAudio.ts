@@ -69,10 +69,14 @@ export class RealtimeChat {
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 3;
   private reconnectDelay: number = 1000; // Start with 1 second delay
+  private audioContext: AudioContext | null = null;
+  private audioQueue: Uint8Array[] = [];
+  private isPlaying: boolean = false;
 
   constructor(private onMessage: (message: any) => void) {
     this.audioEl = document.createElement("audio");
     this.audioEl.autoplay = true;
+    this.audioContext = new AudioContext();
   }
 
   async init(specialty: string = "general") {
@@ -99,7 +103,7 @@ export class RealtimeChat {
   }
 
   private async connect(specialty: string) {
-    // Create WebSocket connection with specialty parameter
+    // Use the exact project ID without env variables
     const wsUrl = `wss://mxdxmxzszgzgmohvemoz.functions.supabase.co/realtime-chat?specialty=${encodeURIComponent(specialty)}`;
     console.log(`Connecting to WebSocket at: ${wsUrl}`);
     
@@ -116,13 +120,15 @@ export class RealtimeChat {
       
       this.ws.onopen = () => {
         console.log('WebSocket connection established');
+        window.clearTimeout(this.connectionTimeout!);
+        this.connectionTimeout = null;
         resolve();
       };
 
-      this.ws.onmessage = (event) => {
+      this.ws.onmessage = async (event) => {
         try {
           const data = JSON.parse(event.data);
-          console.log('Received message from server:', data);
+          console.log('Received message from server:', data.type || 'unknown type');
           
           // Check for errors
           if (data.error) {
@@ -143,6 +149,20 @@ export class RealtimeChat {
             }
             
             this.startRecorder();
+          }
+          
+          // Handle audio data from the server
+          if (data.type === 'response.audio.delta' && data.delta) {
+            try {
+              const binaryString = atob(data.delta);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              await this.addToAudioQueue(bytes);
+            } catch (error) {
+              console.error('Error processing audio data:', error);
+            }
           }
           
           // Forward all messages to the callback handler
@@ -186,6 +206,88 @@ export class RealtimeChat {
         }
       };
     });
+  }
+
+  private async addToAudioQueue(audioData: Uint8Array) {
+    if (!this.audioContext) return;
+    
+    this.audioQueue.push(audioData);
+    if (!this.isPlaying) {
+      await this.playNextAudio();
+    }
+  }
+
+  private async playNextAudio() {
+    if (!this.audioContext || this.audioQueue.length === 0) {
+      this.isPlaying = false;
+      return;
+    }
+
+    this.isPlaying = true;
+    const audioData = this.audioQueue.shift()!;
+
+    try {
+      // Convert PCM to WAV for browser playback
+      const wavData = this.createWavFromPCM(audioData);
+      const audioBuffer = await this.audioContext.decodeAudioData(wavData.buffer);
+      
+      const source = this.audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(this.audioContext.destination);
+      
+      source.onended = () => this.playNextAudio();
+      source.start(0);
+    } catch (error) {
+      console.error('Error playing audio:', error);
+      this.playNextAudio(); // Continue with next segment even if current fails
+    }
+  }
+
+  private createWavFromPCM(pcmData: Uint8Array): Uint8Array {
+    // Convert bytes to 16-bit samples
+    const int16Data = new Int16Array(pcmData.length / 2);
+    for (let i = 0; i < pcmData.length; i += 2) {
+      int16Data[i / 2] = (pcmData[i + 1] << 8) | pcmData[i];
+    }
+    
+    // Create WAV header
+    const wavHeader = new ArrayBuffer(44);
+    const view = new DataView(wavHeader);
+    
+    const writeString = (view: DataView, offset: number, string: string) => {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    };
+
+    // WAV header parameters
+    const sampleRate = 24000;
+    const numChannels = 1;
+    const bitsPerSample = 16;
+    const blockAlign = (numChannels * bitsPerSample) / 8;
+    const byteRate = sampleRate * blockAlign;
+
+    // Write WAV header
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + int16Data.byteLength, true);
+    writeString(view, 8, 'WAVE');
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true); // PCM format
+    view.setUint16(20, 1, true); // PCM format code
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitsPerSample, true);
+    writeString(view, 36, 'data');
+    view.setUint32(40, int16Data.byteLength, true);
+
+    // Combine header and data
+    const wavArray = new Uint8Array(wavHeader.byteLength + int16Data.byteLength);
+    wavArray.set(new Uint8Array(wavHeader), 0);
+    wavArray.set(new Uint8Array(int16Data.buffer), wavHeader.byteLength);
+    
+    return wavArray;
   }
 
   private async startRecorder() {
@@ -255,6 +357,13 @@ export class RealtimeChat {
       this.connectionTimeout = null;
     }
 
+    // Clear audio
+    this.audioQueue = [];
+    if (this.audioContext) {
+      this.audioContext.close();
+      this.audioContext = null;
+    }
+    
     this.recorder?.stop();
     if (this.ws) {
       if (this.ws.readyState === WebSocket.OPEN) {

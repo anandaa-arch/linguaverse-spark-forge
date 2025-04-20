@@ -33,6 +33,7 @@ serve(async (req) => {
 
     // Track client state
     let clientSecret: string | null = null;
+    let hasInitialSessionUpdate = false;
     
     // Extract avatar specialty from the URL
     const url = new URL(req.url);
@@ -89,53 +90,103 @@ serve(async (req) => {
         console.log("Sending session data to client");
         socket.send(JSON.stringify(data));
         
-        // Send session.update to configure additional settings after a short delay
+        // Send session.update to configure additional settings immediately after sending session data
         if (clientSecret) {
-          setTimeout(() => {
-            try {
-              console.log("Updating session configuration");
-              const updateMessage = {
-                type: "session.update",
-                session: {
-                  modalities: ["text", "audio"],
-                  voice: "alloy",
-                  input_audio_format: "pcm16",
-                  output_audio_format: "pcm16",
-                  turn_detection: {
-                    type: "server_vad",
-                    threshold: 0.5,
-                    prefix_padding_ms: 300,
-                    silence_duration_ms: 1000
-                  }
+          console.log("Updating session configuration");
+          const updateMessage = {
+            type: "session.update",
+            session: {
+              modalities: ["text", "audio"],
+              voice: "alloy",
+              input_audio_format: "pcm16",
+              output_audio_format: "pcm16",
+              turn_detection: {
+                type: "server_vad",
+                threshold: 0.5,
+                prefix_padding_ms: 300,
+                silence_duration_ms: 1000
+              }
+            },
+            client_secret: { value: clientSecret }
+          };
+          
+          try {
+            const updateResponse = await fetch("https://api.openai.com/v1/realtime", {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${clientSecret}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(updateMessage),
+            });
+            
+            if (!updateResponse.ok) {
+              console.error(`Error in session.update: ${updateResponse.status}`);
+              socket.send(JSON.stringify({ error: `Session update failed: ${updateResponse.status}` }));
+            } else {
+              console.log("Session updated successfully");
+              hasInitialSessionUpdate = true;
+              
+              // Send a welcome message to trigger the first response from the AI
+              const welcomeMessage = {
+                type: 'conversation.item.create',
+                item: {
+                  type: 'message',
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'input_text',
+                      text: 'Hello, I\'m ready to practice.'
+                    }
+                  ]
                 },
                 client_secret: { value: clientSecret }
               };
               
-              fetch("https://api.openai.com/v1/realtime", {
-                method: "POST",
-                headers: {
-                  "Authorization": `Bearer ${clientSecret}`,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify(updateMessage),
-              })
-              .then(resp => {
-                if (!resp.ok) {
-                  console.error(`Error in session.update: ${resp.status}`);
-                  socket.send(JSON.stringify({ error: `Session update failed: ${resp.status}` }));
+              try {
+                const welcomeResponse = await fetch("https://api.openai.com/v1/realtime", {
+                  method: "POST",
+                  headers: {
+                    "Authorization": `Bearer ${clientSecret}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify(welcomeMessage),
+                });
+                
+                if (!welcomeResponse.ok) {
+                  console.error(`Error sending welcome message: ${welcomeResponse.status}`);
                 } else {
-                  console.log("Session updated successfully");
+                  console.log("Welcome message sent successfully");
+                  
+                  // Create response
+                  const responseCreate = {
+                    type: 'response.create',
+                    client_secret: { value: clientSecret }
+                  };
+                  
+                  const createResponse = await fetch("https://api.openai.com/v1/realtime", {
+                    method: "POST",
+                    headers: {
+                      "Authorization": `Bearer ${clientSecret}`,
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify(responseCreate),
+                  });
+                  
+                  if (!createResponse.ok) {
+                    console.error(`Error creating response: ${createResponse.status}`);
+                  } else {
+                    console.log("Response created successfully");
+                  }
                 }
-              })
-              .catch(err => {
-                console.error("Failed to update session:", err);
-                socket.send(JSON.stringify({ error: `Failed to update session: ${err.message}` }));
-              });
-            } catch (error) {
-              console.error("Error sending session update:", error);
-              socket.send(JSON.stringify({ error: `Error updating session: ${error.message}` }));
+              } catch (err) {
+                console.error("Failed to send welcome message:", err);
+              }
             }
-          }, 500);
+          } catch (err) {
+            console.error("Failed to update session:", err);
+            socket.send(JSON.stringify({ error: `Failed to update session: ${err.message}` }));
+          }
         }
       } catch (error) {
         console.error("Error getting session token:", error);

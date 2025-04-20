@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { RealtimeChat } from '@/utils/RealtimeAudio';
-import { Mic, Square, AlertTriangle } from 'lucide-react';
+import { Mic, Square, AlertTriangle, RotateCw } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 interface VoiceInterfaceProps {
@@ -19,6 +19,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
   const { toast } = useToast();
   const [isConnected, setIsConnected] = useState(false);
   const [transcript, setTranscript] = useState<string>("");
+  const [aiResponse, setAiResponse] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
@@ -52,7 +53,11 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
     } else if (event.type === 'response.audio.done') {
       onSpeakingChange(false);
     } else if (event.type === 'response.audio_transcript.delta') {
-      setTranscript(prev => prev + (event.delta || ""));
+      const delta = event.delta || "";
+      setAiResponse(prev => prev + delta);
+    } else if (event.type === 'input_audio_transcript.delta') {
+      const delta = event.delta || "";
+      setTranscript(prev => prev + delta);
     }
   };
 
@@ -60,13 +65,13 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
     setIsLoading(true);
     setError(null);
     setTranscript("");
+    setAiResponse("");
     
     try {
       if (chatRef.current) {
         chatRef.current.disconnect();
       }
       
-      // Pass the specialty to the RealtimeChat constructor
       chatRef.current = new RealtimeChat(handleMessage);
       await chatRef.current.init(selectedAvatar.specialty);
       setIsConnected(true);
@@ -116,6 +121,8 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
           chatRef.current.disconnect();
           chatRef.current = null;
           setIsConnected(false);
+          setTranscript("");
+          setAiResponse("");
         }
       }, 500);
     }
@@ -132,9 +139,16 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
 
   return (
     <div className="space-y-6">
-      <div className="p-4 border rounded-lg bg-muted/30">
-        <h3 className="font-medium mb-2">Your Speech Transcript:</h3>
-        <p className="text-muted-foreground">{transcript || "Start speaking to see your transcript..."}</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="p-4 border rounded-lg bg-muted/30">
+          <h3 className="font-medium mb-2">Your Speech:</h3>
+          <p className="text-muted-foreground">{transcript || "Start speaking to see your transcript..."}</p>
+        </div>
+        
+        <div className="p-4 border rounded-lg bg-muted/30">
+          <h3 className="font-medium mb-2">{selectedAvatar.name}'s Response:</h3>
+          <p className="text-muted-foreground">{aiResponse || "Waiting for AI response..."}</p>
+        </div>
       </div>
 
       {error && (
@@ -155,7 +169,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
           >
             {isLoading ? (
               <>
-                <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"></div>
+                <RotateCw className="mr-2 h-4 w-4 animate-spin" />
                 Connecting...
               </>
             ) : (
