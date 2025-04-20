@@ -7,10 +7,69 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+
+// Simple in-memory service monitoring
+let serviceStatus = {
+  isHealthy: true,
+  lastCheck: Date.now(),
+  errorCount: 0,
+  lastError: null as string | null,
+  maxErrorCount: 5,
+  resetIntervalMs: 60000 // Reset error count after 1 minute
+};
+
+// Health check interval
+setInterval(() => {
+  const now = Date.now();
+  if (now - serviceStatus.lastCheck > serviceStatus.resetIntervalMs) {
+    serviceStatus.errorCount = 0;
+    serviceStatus.isHealthy = true;
+  }
+}, 30000);
+
+// Function to log errors and track service health
+const logError = (error: any) => {
+  console.error('Error:', error);
+  serviceStatus.errorCount++;
+  serviceStatus.lastError = error instanceof Error ? error.message : String(error);
+  serviceStatus.lastCheck = Date.now();
+  
+  if (serviceStatus.errorCount >= serviceStatus.maxErrorCount) {
+    serviceStatus.isHealthy = false;
+  }
+};
+
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
+  }
+
+  // Service health check endpoint
+  const url = new URL(req.url);
+  if (url.pathname.endsWith('/health')) {
+    return new Response(JSON.stringify({
+      status: serviceStatus.isHealthy ? 'healthy' : 'degraded',
+      errors: serviceStatus.errorCount,
+      lastError: serviceStatus.lastError
+    }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+  }
+
+  // Handle ping requests
+  if (req.method === 'POST') {
+    try {
+      const body = await req.json();
+      if (body.type === 'ping') {
+        return new Response(JSON.stringify({ type: 'pong' }), { 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        });
+      }
+    } catch (e) {
+      // Continue if not a ping request
+    }
   }
 
   const { headers } = req
@@ -22,7 +81,6 @@ serve(async (req) => {
 
   try {
     const { socket, response } = Deno.upgradeWebSocket(req)
-    const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')
 
     if (!OPENAI_API_KEY) {
       console.error("OpenAI API key not found in environment variables");
@@ -45,12 +103,12 @@ serve(async (req) => {
       
       try {
         // Customize prompt based on avatar specialty
-        let instructions = "You are an AI language tutor. Analyze user's speech for grammar and pronunciation issues, and provide helpful feedback.";
+        let instructions = "You are an AI language tutor named LinguaBot. Be friendly, helpful and engage in conversation about language learning topics. Ask questions about the user's language learning goals and offer personalized advice. Keep responses concise.";
         
         if (avatarSpecialty === "grammar") {
-          instructions = "You are a grammar expert. Focus on identifying grammar mistakes in the user's speech and explain how to correct them with examples.";
+          instructions = "You are Professor Lang, a grammar expert. Focus on identifying grammar mistakes in the user's speech and explain how to correct them with examples. Be professional but encouraging. Keep responses concise and educational.";
         } else if (avatarSpecialty === "pronunciation") {
-          instructions = "You are a pronunciation coach. Help users improve their speech by identifying pronunciation issues and providing exercises to practice.";
+          instructions = "You are Traveler, a pronunciation coach. Help users improve their speech by identifying pronunciation issues and providing exercises to practice. Be enthusiastic and supportive. Share tips from different regions where the language is spoken. Keep responses brief and practical.";
         }
         
         console.log(`Using specialty: ${avatarSpecialty} with instructions: ${instructions}`);
@@ -71,7 +129,7 @@ serve(async (req) => {
 
         if (!tokenResponse.ok) {
           const errorText = await tokenResponse.text();
-          console.error("Error from OpenAI:", errorText);
+          logError(`OpenAI API error: ${errorText}`);
           socket.send(JSON.stringify({ error: `OpenAI API error: ${errorText}` }));
           socket.close(1011, `OpenAI API error: ${errorText}`);
           return;
@@ -81,7 +139,7 @@ serve(async (req) => {
         clientSecret = data.client_secret?.value;
         
         if (!clientSecret) {
-          console.error("No client secret received from OpenAI");
+          logError("No client secret received from OpenAI");
           socket.send(JSON.stringify({ error: "Failed to get client secret from OpenAI" }));
           socket.close(1011, "Failed to get client secret");
           return;
@@ -121,7 +179,8 @@ serve(async (req) => {
             });
             
             if (!updateResponse.ok) {
-              console.error(`Error in session.update: ${updateResponse.status}`);
+              const errorMsg = `Error in session.update: ${updateResponse.status}`;
+              logError(errorMsg);
               socket.send(JSON.stringify({ error: `Session update failed: ${updateResponse.status}` }));
             } else {
               console.log("Session updated successfully");
@@ -136,7 +195,7 @@ serve(async (req) => {
                   content: [
                     {
                       type: 'input_text',
-                      text: 'Hello, I\'m ready to practice.'
+                      text: 'Hello, I\'d like to practice my language skills with you. Please introduce yourself briefly.'
                     }
                   ]
                 },
@@ -180,16 +239,17 @@ serve(async (req) => {
                   }
                 }
               } catch (err) {
-                console.error("Failed to send welcome message:", err);
+                logError(`Failed to send welcome message: ${err}`);
+                socket.send(JSON.stringify({ error: `Welcome message failed: ${err.message}` }));
               }
             }
           } catch (err) {
-            console.error("Failed to update session:", err);
+            logError(`Failed to update session: ${err}`);
             socket.send(JSON.stringify({ error: `Failed to update session: ${err.message}` }));
           }
         }
       } catch (error) {
-        console.error("Error getting session token:", error);
+        logError(`Error getting session token: ${error}`);
         socket.send(JSON.stringify({ error: `Error getting session token: ${error.message}` }));
         socket.close(1011, `Error getting session token: ${error.message}`);
       }
@@ -199,6 +259,11 @@ serve(async (req) => {
       try {
         const message = JSON.parse(event.data);
         console.log("Received message from client:", message.type);
+        
+        if (message.type === 'ping') {
+          socket.send(JSON.stringify({ type: 'pong' }));
+          return;
+        }
         
         if (message.type === 'input_audio_buffer.append' && message.audio) {
           // Forward audio data to OpenAI using client_secret 
@@ -223,7 +288,7 @@ serve(async (req) => {
           
           if (!response.ok) {
             const error = await response.text();
-            console.error("Error forwarding audio to OpenAI:", error);
+            logError(`Error forwarding audio to OpenAI: ${error}`);
             socket.send(JSON.stringify({ error: `Error forwarding audio: ${error}` }));
             return;
           }
@@ -251,7 +316,7 @@ serve(async (req) => {
           
           if (!response.ok) {
             const error = await response.text();
-            console.error("Error sending message to OpenAI:", error);
+            logError(`Error sending message to OpenAI: ${error}`);
             socket.send(JSON.stringify({ error: `Error sending message: ${error}` }));
             return;
           }
@@ -267,13 +332,13 @@ serve(async (req) => {
           }
         }
       } catch (error) {
-        console.error("Error handling websocket message:", error);
+        logError(`Error handling websocket message: ${error}`);
         socket.send(JSON.stringify({ error: `Error handling message: ${error.message}` }));
       }
     };
 
     socket.onerror = (error) => {
-      console.error("WebSocket server error:", error);
+      logError(`WebSocket server error: ${error}`);
       try {
         socket.send(JSON.stringify({ error: "WebSocket server error occurred" }));
       } catch (e) {
@@ -287,7 +352,7 @@ serve(async (req) => {
 
     return response;
   } catch (error) {
-    console.error("Error handling connection:", error);
+    logError(`Error handling connection: ${error}`);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },

@@ -1,4 +1,3 @@
-
 export class AudioRecorder {
   private stream: MediaStream | null = null;
   private audioContext: AudioContext | null = null;
@@ -72,6 +71,7 @@ export class RealtimeChat {
   private audioContext: AudioContext | null = null;
   private audioQueue: Uint8Array[] = [];
   private isPlaying: boolean = false;
+  private pingInterval: number | null = null;
 
   constructor(private onMessage: (message: any) => void) {
     this.audioEl = document.createElement("audio");
@@ -83,6 +83,14 @@ export class RealtimeChat {
     try {
       this.reconnectAttempts = 0;
       await this.connect(specialty);
+      
+      // Send a ping every 30 seconds to keep the connection alive
+      this.pingInterval = window.setInterval(() => {
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 30000);
+      
     } catch (error) {
       console.error("Error initializing chat:", error);
       
@@ -103,7 +111,7 @@ export class RealtimeChat {
   }
 
   private async connect(specialty: string) {
-    // Use the exact project ID without env variables
+    // Use the exact project ID to avoid env variables
     const wsUrl = `wss://mxdxmxzszgzgmohvemoz.functions.supabase.co/realtime-chat?specialty=${encodeURIComponent(specialty)}`;
     console.log(`Connecting to WebSocket at: ${wsUrl}`);
     
@@ -113,8 +121,13 @@ export class RealtimeChat {
       // Set a shorter timeout (5 seconds)
       this.connectionTimeout = window.setTimeout(() => {
         if (this.ws?.readyState !== WebSocket.OPEN) {
-          this.ws?.close();
-          reject(new Error("Connection timeout"));
+          if (this.ws) {
+            // Only close if we haven't already closed
+            if (this.ws.readyState !== WebSocket.CLOSED) {
+              this.ws.close();
+            }
+          }
+          reject(new Error("Connection timeout - server might be unavailable"));
         }
       }, 5000);
       
@@ -151,6 +164,12 @@ export class RealtimeChat {
             this.startRecorder();
           }
           
+          // Handle pong to confirm server is alive
+          if (data.type === 'pong') {
+            console.log('Received pong from server');
+            return;
+          }
+          
           // Handle audio data from the server
           if (data.type === 'response.audio.delta' && data.delta) {
             try {
@@ -179,12 +198,18 @@ export class RealtimeChat {
           clearTimeout(this.connectionTimeout);
           this.connectionTimeout = null;
         }
-        reject(new Error("WebSocket connection error"));
+        reject(new Error("WebSocket connection error - server might be unavailable"));
       };
 
       this.ws.onclose = (event) => {
         console.log('WebSocket connection closed:', event.code, event.reason);
         this.connectionReady = false;
+        
+        if (this.pingInterval !== null) {
+          clearInterval(this.pingInterval);
+          this.pingInterval = null;
+        }
+        
         if (this.connectionTimeout !== null) {
           clearTimeout(this.connectionTimeout);
           this.connectionTimeout = null;
@@ -308,27 +333,31 @@ export class RealtimeChat {
     if (this.ws?.readyState === WebSocket.OPEN && this.connectionReady) {
       console.log("Finalizing session, triggering response.create");
       
-      // Create a conversation item to prompt the AI to respond
-      this.ws.send(JSON.stringify({
-        type: 'conversation.item.create',
-        item: {
-          type: 'message',
-          role: 'user',
-          content: [
-            {
-              type: 'input_text',
-              text: 'Please analyze what I said and respond accordingly.'
-            }
-          ]
-        },
-        client_secret: { value: this.clientSecret }
-      }));
-      
-      // Explicitly request a response
-      this.ws.send(JSON.stringify({
-        type: 'response.create',
-        client_secret: { value: this.clientSecret }
-      }));
+      try {
+        // Create a conversation item to prompt the AI to respond
+        this.ws.send(JSON.stringify({
+          type: 'conversation.item.create',
+          item: {
+            type: 'message',
+            role: 'user',
+            content: [
+              {
+                type: 'input_text',
+                text: 'Please analyze what I said and respond accordingly.'
+              }
+            ]
+          },
+          client_secret: { value: this.clientSecret }
+        }));
+        
+        // Explicitly request a response
+        this.ws.send(JSON.stringify({
+          type: 'response.create',
+          client_secret: { value: this.clientSecret }
+        }));
+      } catch (error) {
+        console.error('Error finalizing session:', error);
+      }
     }
   }
 
@@ -352,6 +381,11 @@ export class RealtimeChat {
   }
 
   disconnect() {
+    if (this.pingInterval !== null) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
+    
     if (this.connectionTimeout !== null) {
       clearTimeout(this.connectionTimeout);
       this.connectionTimeout = null;

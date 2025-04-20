@@ -7,6 +7,8 @@ import VoiceInterface from "@/components/VoiceInterface";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { AIChatInterface } from "@/components/ui/ai-chat-interface";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AlertTriangle } from "lucide-react";
 
 const avatarOptions = [
   { id: "linguabot", name: "LinguaBot", style: "futuristic", specialty: "general" },
@@ -60,6 +62,7 @@ const AvatarPage = () => {
   const [selectedAvatar, setSelectedAvatar] = useState(avatarOptions[0]);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [useVoice, setUseVoice] = useState(true);
+  const [serviceStatus, setServiceStatus] = useState<'operational' | 'degraded' | 'unknown'>('unknown');
   
   // Generate appropriate welcome message based on avatar
   const getWelcomeMessage = () => {
@@ -83,6 +86,16 @@ const AvatarPage = () => {
           />
           
           <div className="max-w-5xl mx-auto">
+            {serviceStatus === 'degraded' && (
+              <Alert variant="warning" className="mb-6">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Voice Service Degraded</AlertTitle>
+                <AlertDescription>
+                  Our voice service is currently experiencing issues. You may want to use text chat instead, or try again later.
+                </AlertDescription>
+              </Alert>
+            )}
+            
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <motion.div
                 initial={{ opacity: 0, x: -20 }}
