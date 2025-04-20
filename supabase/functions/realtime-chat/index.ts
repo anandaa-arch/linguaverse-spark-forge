@@ -40,7 +40,7 @@ serve(async (req) => {
     console.log(`Connection requested for avatar specialty: ${avatarSpecialty}`);
 
     socket.onopen = async () => {
-      console.log("Client connected");
+      console.log("Client connected to WebSocket server");
       
       try {
         // Customize prompt based on avatar specialty
@@ -72,6 +72,7 @@ serve(async (req) => {
           const errorText = await tokenResponse.text();
           console.error("Error from OpenAI:", errorText);
           socket.send(JSON.stringify({ error: `OpenAI API error: ${errorText}` }));
+          socket.close(1011, `OpenAI API error: ${errorText}`);
           return;
         }
 
@@ -81,16 +82,18 @@ serve(async (req) => {
         if (!clientSecret) {
           console.error("No client secret received from OpenAI");
           socket.send(JSON.stringify({ error: "Failed to get client secret from OpenAI" }));
+          socket.close(1011, "Failed to get client secret");
           return;
         }
         
         console.log("Sending session data to client");
         socket.send(JSON.stringify(data));
         
-        // Send session.update to configure additional settings
+        // Send session.update to configure additional settings after a short delay
         if (clientSecret) {
           setTimeout(() => {
             try {
+              console.log("Updating session configuration");
               const updateMessage = {
                 type: "session.update",
                 session: {
@@ -119,21 +122,25 @@ serve(async (req) => {
               .then(resp => {
                 if (!resp.ok) {
                   console.error(`Error in session.update: ${resp.status}`);
+                  socket.send(JSON.stringify({ error: `Session update failed: ${resp.status}` }));
                 } else {
                   console.log("Session updated successfully");
                 }
               })
               .catch(err => {
                 console.error("Failed to update session:", err);
+                socket.send(JSON.stringify({ error: `Failed to update session: ${err.message}` }));
               });
             } catch (error) {
               console.error("Error sending session update:", error);
+              socket.send(JSON.stringify({ error: `Error updating session: ${error.message}` }));
             }
-          }, 1000);
+          }, 500);
         }
       } catch (error) {
         console.error("Error getting session token:", error);
         socket.send(JSON.stringify({ error: `Error getting session token: ${error.message}` }));
+        socket.close(1011, `Error getting session token: ${error.message}`);
       }
     };
 
@@ -147,6 +154,7 @@ serve(async (req) => {
           const secretToUse = message.client_secret?.value || clientSecret;
           if (!secretToUse) {
             console.error("No client secret provided for audio forwarding");
+            socket.send(JSON.stringify({ error: "No client secret available" }));
             return;
           }
           
@@ -169,14 +177,14 @@ serve(async (req) => {
             return;
           }
           
-          const responseData = await response.json();
-          socket.send(JSON.stringify(responseData));
+          // No need to forward response for audio buffer
         } 
         // Handle session finalization with text input or response creation
         else if (message.type === 'conversation.item.create' || message.type === 'response.create') {
           const secretToUse = message.client_secret?.value || clientSecret;
           if (!secretToUse) {
             console.error("No client secret provided for message forwarding");
+            socket.send(JSON.stringify({ error: "No client secret available" }));
             return;
           }
           
@@ -197,8 +205,15 @@ serve(async (req) => {
             return;
           }
           
+          // Process and forward the response data to the client
           const responseData = await response.json();
+          console.log(`Received response for ${message.type}:`, responseData.type);
           socket.send(JSON.stringify(responseData));
+          
+          // Continue monitoring for additional responses from OpenAI after response.create
+          if (message.type === 'response.create') {
+            console.log("Monitoring for streaming responses after response.create");
+          }
         }
       } catch (error) {
         console.error("Error handling websocket message:", error);
@@ -207,7 +222,12 @@ serve(async (req) => {
     };
 
     socket.onerror = (error) => {
-      console.error("WebSocket error:", error);
+      console.error("WebSocket server error:", error);
+      try {
+        socket.send(JSON.stringify({ error: "WebSocket server error occurred" }));
+      } catch (e) {
+        console.error("Could not send error message to client:", e);
+      }
     };
 
     socket.onclose = (event) => {

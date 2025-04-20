@@ -3,7 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { RealtimeChat } from '@/utils/RealtimeAudio';
-import { Mic, Square } from 'lucide-react';
+import { Mic, Square, AlertTriangle } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 interface VoiceInterfaceProps {
@@ -23,7 +23,7 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const chatRef = useRef<RealtimeChat | null>(null);
-  const maxRetries = 2;
+  const maxRetries = 3;
 
   const handleMessage = (event: any) => {
     console.log('Received message:', event);
@@ -34,6 +34,15 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
         title: "Error",
         description: event.error,
         variant: "destructive",
+      });
+      return;
+    }
+    
+    if (event.type === 'connection.reconnect') {
+      setRetryCount(event.attempt);
+      toast({
+        title: "Reconnecting",
+        description: `Attempt ${event.attempt}/${event.maxAttempts}`,
       });
       return;
     }
@@ -53,6 +62,10 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
     setTranscript("");
     
     try {
+      if (chatRef.current) {
+        chatRef.current.disconnect();
+      }
+      
       // Pass the specialty to the RealtimeChat constructor
       chatRef.current = new RealtimeChat(handleMessage);
       await chatRef.current.init(selectedAvatar.specialty);
@@ -67,20 +80,25 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
       console.error('Error starting conversation:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to start conversation';
       setError(errorMessage);
+      setIsConnected(false);
+      
       toast({
-        title: "Error",
+        title: "Connection Error",
         description: errorMessage,
         variant: "destructive",
       });
       
+      // Only show automatic retry if under max retries
       if (retryCount < maxRetries) {
-        // Auto-retry logic
+        setRetryCount(prev => prev + 1);
         toast({
           title: "Retrying",
           description: `Retrying connection (${retryCount + 1}/${maxRetries})...`,
         });
-        setRetryCount(prev => prev + 1);
-        setTimeout(() => startConversation(), 2000);
+        
+        // Retry after a delay with exponential backoff
+        const delay = 1000 * Math.pow(2, retryCount);
+        setTimeout(() => startConversation(), delay);
       }
     } finally {
       setIsLoading(false);
@@ -94,9 +112,11 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
       
       // Short delay before disconnecting to allow for response processing
       setTimeout(() => {
-        chatRef.current?.disconnect();
-        chatRef.current = null;
-        setIsConnected(false);
+        if (chatRef.current) {
+          chatRef.current.disconnect();
+          chatRef.current = null;
+          setIsConnected(false);
+        }
       }, 500);
     }
   };
@@ -119,7 +139,8 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
 
       {error && (
         <Alert variant="destructive">
-          <AlertTitle>Error</AlertTitle>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Connection Failed</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}

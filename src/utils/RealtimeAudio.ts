@@ -66,6 +66,9 @@ export class RealtimeChat {
   private clientSecret: string | null = null;
   private connectionReady: boolean = false;
   private connectionTimeout: number | null = null;
+  private reconnectAttempts: number = 0;
+  private maxReconnectAttempts: number = 3;
+  private reconnectDelay: number = 1000; // Start with 1 second delay
 
   constructor(private onMessage: (message: any) => void) {
     this.audioEl = document.createElement("audio");
@@ -74,13 +77,46 @@ export class RealtimeChat {
 
   async init(specialty: string = "general") {
     try {
-      // Create WebSocket connection with specialty parameter
-      const wsUrl = `wss://mxdxmxzszgzgmohvemoz.functions.supabase.co/realtime-chat?specialty=${encodeURIComponent(specialty)}`;
-      console.log(`Connecting to WebSocket at: ${wsUrl}`);
+      this.reconnectAttempts = 0;
+      await this.connect(specialty);
+    } catch (error) {
+      console.error("Error initializing chat:", error);
+      
+      // Try to reconnect automatically with exponential backoff
+      if (this.reconnectAttempts < this.maxReconnectAttempts) {
+        this.reconnectAttempts++;
+        const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+        console.log(`Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`);
+        
+        this.onMessage({ type: 'connection.reconnect', attempt: this.reconnectAttempts, maxAttempts: this.maxReconnectAttempts });
+        
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return this.init(specialty);
+      }
+      
+      throw error;
+    }
+  }
+
+  private async connect(specialty: string) {
+    // Create WebSocket connection with specialty parameter
+    const wsUrl = `wss://mxdxmxzszgzgmohvemoz.functions.supabase.co/realtime-chat?specialty=${encodeURIComponent(specialty)}`;
+    console.log(`Connecting to WebSocket at: ${wsUrl}`);
+    
+    return new Promise<void>((resolve, reject) => {
       this.ws = new WebSocket(wsUrl);
+      
+      // Set a shorter timeout (5 seconds)
+      this.connectionTimeout = window.setTimeout(() => {
+        if (this.ws?.readyState !== WebSocket.OPEN) {
+          this.ws?.close();
+          reject(new Error("Connection timeout"));
+        }
+      }, 5000);
       
       this.ws.onopen = () => {
         console.log('WebSocket connection established');
+        resolve();
       };
 
       this.ws.onmessage = (event) => {
@@ -91,7 +127,8 @@ export class RealtimeChat {
           // Check for errors
           if (data.error) {
             console.error('Server error:', data.error);
-            throw new Error(data.error);
+            this.onMessage({ error: data.error });
+            return;
           }
           
           // Store client secret when we receive the session token
@@ -99,61 +136,56 @@ export class RealtimeChat {
             console.log('Received client secret, starting recorder');
             this.clientSecret = data.client_secret.value;
             this.connectionReady = true;
-            this.startRecorder();
             
-            // Clear timeout since connection is successful
             if (this.connectionTimeout !== null) {
               clearTimeout(this.connectionTimeout);
               this.connectionTimeout = null;
             }
+            
+            this.startRecorder();
           }
           
           // Forward all messages to the callback handler
           this.onMessage(data);
         } catch (error) {
           console.error('Error handling websocket message:', error);
+          this.onMessage({ error: 'Error processing server message' });
         }
       };
 
       this.ws.onerror = (error) => {
         console.error('WebSocket error:', error);
+        if (this.connectionTimeout !== null) {
+          clearTimeout(this.connectionTimeout);
+          this.connectionTimeout = null;
+        }
+        reject(new Error("WebSocket connection error"));
       };
 
       this.ws.onclose = (event) => {
         console.log('WebSocket connection closed:', event.code, event.reason);
         this.connectionReady = false;
-      };
-
-      // Set a timeout to reject the promise if connection isn't established
-      return new Promise<void>((resolve, reject) => {
-        // Set a shorter timeout (8 seconds)
-        this.connectionTimeout = window.setTimeout(() => {
-          reject(new Error("Connection timeout"));
-        }, 8000);
+        if (this.connectionTimeout !== null) {
+          clearTimeout(this.connectionTimeout);
+          this.connectionTimeout = null;
+        }
         
-        const checkInterval = setInterval(() => {
-          if (this.ws?.readyState === WebSocket.OPEN) {
-            clearInterval(checkInterval);
-            if (this.connectionTimeout !== null) {
-              clearTimeout(this.connectionTimeout);
-              this.connectionTimeout = null;
-            }
-            resolve();
-          } else if (this.ws?.readyState === WebSocket.CLOSED || this.ws?.readyState === WebSocket.CLOSING) {
-            clearInterval(checkInterval);
-            if (this.connectionTimeout !== null) {
-              clearTimeout(this.connectionTimeout);
-              this.connectionTimeout = null;
-            }
-            reject(new Error("Connection failed"));
-          }
-        }, 100);
-      });
-
-    } catch (error) {
-      console.error("Error initializing chat:", error);
-      throw error;
-    }
+        // Only try to auto-reconnect if the connection was previously established
+        if (this.clientSecret && this.reconnectAttempts < this.maxReconnectAttempts) {
+          this.reconnectAttempts++;
+          const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+          console.log(`Connection closed. Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`);
+          
+          this.onMessage({ 
+            type: 'connection.reconnect', 
+            attempt: this.reconnectAttempts, 
+            maxAttempts: this.maxReconnectAttempts 
+          });
+          
+          setTimeout(() => this.connect(specialty), delay);
+        }
+      };
+    });
   }
 
   private async startRecorder() {
@@ -170,7 +202,6 @@ export class RealtimeChat {
     await this.recorder.start();
   }
 
-  // Add this new method to finalize the session when user stops recording
   finalizeSession() {
     if (this.ws?.readyState === WebSocket.OPEN && this.connectionReady) {
       console.log("Finalizing session, triggering response.create");
