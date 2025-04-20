@@ -65,16 +65,19 @@ export class RealtimeChat {
   private recorder: AudioRecorder | null = null;
   private clientSecret: string | null = null;
   private connectionReady: boolean = false;
+  private connectionTimeout: number | null = null;
 
   constructor(private onMessage: (message: any) => void) {
     this.audioEl = document.createElement("audio");
     this.audioEl.autoplay = true;
   }
 
-  async init() {
+  async init(specialty: string = "general") {
     try {
-      // Create WebSocket connection to our Supabase edge function
-      this.ws = new WebSocket('wss://mxdxmxzszgzgmohvemoz.functions.supabase.co/realtime-chat');
+      // Create WebSocket connection with specialty parameter
+      const wsUrl = `wss://mxdxmxzszgzgmohvemoz.functions.supabase.co/realtime-chat?specialty=${encodeURIComponent(specialty)}`;
+      console.log(`Connecting to WebSocket at: ${wsUrl}`);
+      this.ws = new WebSocket(wsUrl);
       
       this.ws.onopen = () => {
         console.log('WebSocket connection established');
@@ -97,6 +100,12 @@ export class RealtimeChat {
             this.clientSecret = data.client_secret.value;
             this.connectionReady = true;
             this.startRecorder();
+            
+            // Clear timeout since connection is successful
+            if (this.connectionTimeout !== null) {
+              clearTimeout(this.connectionTimeout);
+              this.connectionTimeout = null;
+            }
           }
           
           // Forward all messages to the callback handler
@@ -115,19 +124,28 @@ export class RealtimeChat {
         this.connectionReady = false;
       };
 
-      // Wait for connection to be established
+      // Set a timeout to reject the promise if connection isn't established
       return new Promise<void>((resolve, reject) => {
-        let timeoutId: number;
-        
-        const connectionTimeout = setTimeout(() => {
+        // Set a shorter timeout (8 seconds)
+        this.connectionTimeout = window.setTimeout(() => {
           reject(new Error("Connection timeout"));
-        }, 10000);
+        }, 8000);
         
         const checkInterval = setInterval(() => {
           if (this.ws?.readyState === WebSocket.OPEN) {
             clearInterval(checkInterval);
-            clearTimeout(connectionTimeout);
+            if (this.connectionTimeout !== null) {
+              clearTimeout(this.connectionTimeout);
+              this.connectionTimeout = null;
+            }
             resolve();
+          } else if (this.ws?.readyState === WebSocket.CLOSED || this.ws?.readyState === WebSocket.CLOSING) {
+            clearInterval(checkInterval);
+            if (this.connectionTimeout !== null) {
+              clearTimeout(this.connectionTimeout);
+              this.connectionTimeout = null;
+            }
+            reject(new Error("Connection failed"));
           }
         }, 100);
       });
@@ -201,6 +219,11 @@ export class RealtimeChat {
   }
 
   disconnect() {
+    if (this.connectionTimeout !== null) {
+      clearTimeout(this.connectionTimeout);
+      this.connectionTimeout = null;
+    }
+
     this.recorder?.stop();
     if (this.ws) {
       if (this.ws.readyState === WebSocket.OPEN) {

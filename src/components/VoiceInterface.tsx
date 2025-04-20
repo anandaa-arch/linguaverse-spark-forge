@@ -21,7 +21,9 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
   const [transcript, setTranscript] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   const chatRef = useRef<RealtimeChat | null>(null);
+  const maxRetries = 2;
 
   const handleMessage = (event: any) => {
     console.log('Received message:', event);
@@ -51,9 +53,11 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
     setTranscript("");
     
     try {
+      // Pass the specialty to the RealtimeChat constructor
       chatRef.current = new RealtimeChat(handleMessage);
-      await chatRef.current.init();
+      await chatRef.current.init(selectedAvatar.specialty);
       setIsConnected(true);
+      setRetryCount(0);
       
       toast({
         title: "Connected",
@@ -61,12 +65,23 @@ const VoiceInterface: React.FC<VoiceInterfaceProps> = ({ onSpeakingChange, selec
       });
     } catch (error) {
       console.error('Error starting conversation:', error);
-      setError(error instanceof Error ? error.message : 'Failed to start conversation');
+      const errorMessage = error instanceof Error ? error.message : 'Failed to start conversation';
+      setError(errorMessage);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : 'Failed to start conversation',
+        description: errorMessage,
         variant: "destructive",
       });
+      
+      if (retryCount < maxRetries) {
+        // Auto-retry logic
+        toast({
+          title: "Retrying",
+          description: `Retrying connection (${retryCount + 1}/${maxRetries})...`,
+        });
+        setRetryCount(prev => prev + 1);
+        setTimeout(() => startConversation(), 2000);
+      }
     } finally {
       setIsLoading(false);
     }
