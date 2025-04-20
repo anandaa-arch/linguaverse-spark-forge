@@ -87,7 +87,7 @@ const AvatarPage = () => {
           
           <div className="max-w-5xl mx-auto">
             {serviceStatus === 'degraded' && (
-              <Alert variant="warning" className="mb-6">
+              <Alert variant="destructive" className="mb-6">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>Voice Service Degraded</AlertTitle>
                 <AlertDescription>
